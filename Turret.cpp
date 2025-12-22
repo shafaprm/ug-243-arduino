@@ -1,155 +1,155 @@
-// Turret.cpp (CLEAN, JSON-only) - FIXED
+// Turret.cpp (FINAL, FIXED, STATE MACHINE)
 #include "Turret.h"
 #include "Config.h"
 #include <Arduino.h>
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
+#include <Servo.h>
 #include <math.h>
 
 namespace Turret {
 
-// =====================
-// PCA9685 driver
-// =====================
-static Adafruit_PWMServoDriver pca(PCA9685_ADDR);
+// ==================================================
+// ESC (BLDC Shooter)
+// ==================================================
+static Servo esc1;
+static Servo esc2;
 
-// PCA freq servo standard
+// ==================================================
+// PCA9685
+// ==================================================
+static Adafruit_PWMServoDriver pca(PCA9685_ADDR);
 static const float PCA_SERVO_HZ = 50.0f;
 
-// Mapping pulse microseconds -> PCA ticks (0..4095)
+// us -> PCA ticks
 static inline uint16_t usToTicks(uint16_t us) {
-  const float period_us = 1000000.0f / PCA_SERVO_HZ; // ~20000us @50Hz
-  float ticks_f = (4096.0f * us) / period_us;
-  if (ticks_f < 0) ticks_f = 0;
-  if (ticks_f > 4095) ticks_f = 4095;
-  return (uint16_t)lround(ticks_f);
+  const float period_us = 1000000.0f / PCA_SERVO_HZ;
+  float t = (4096.0f * us) / period_us;
+  if (t < 0) t = 0;
+  if (t > 4095) t = 4095;
+  return (uint16_t)lround(t);
 }
 
-// Angle (deg) -> pulse(us) using min/max range for that servo
-static inline uint16_t mapDegToUs(int deg, int degMin, int degMax,
-                                 uint16_t usMin, uint16_t usMax) {
-  if (deg < degMin) deg = degMin;
-  if (deg > degMax) deg = degMax;
-
-  float t = (degMax == degMin) ? 0.0f
-            : (float)(deg - degMin) / (float)(degMax - degMin);
-
-  float us = usMin + t * (float)(usMax - usMin);
+// deg -> us
+static inline uint16_t mapDegToUs(
+  int deg, int dMin, int dMax, uint16_t usMin, uint16_t usMax
+) {
+  deg = constrain(deg, dMin, dMax);
+  float k = (dMax == dMin) ? 0.0f : (float)(deg - dMin) / (float)(dMax - dMin);
+  float us = usMin + k * (float)(usMax - usMin);
   if (us < usMin) us = usMin;
   if (us > usMax) us = usMax;
   return (uint16_t)lround(us);
 }
 
-static inline float clampf(float x, float lo, float hi) {
-  if (x < lo) return lo;
-  if (x > hi) return hi;
-  return x;
-}
-static inline int clampi(int x, int lo, int hi) {
-  if (x < lo) return lo;
-  if (x > hi) return hi;
-  return x;
-}
-static inline float deadz(float x, float dz) {
-  return (fabs(x) < dz) ? 0.0f : x;
-}
-
-// =====================
-// Servo channels on PCA (from Config.h)
-// =====================
+// ==================================================
+// SERVO CHANNELS
+// ==================================================
 static const uint8_t CH_YAW   = SERVO_YAW_CH;
 static const uint8_t CH_PITCH = SERVO_PITCH_CH;
 static const uint8_t CH_FIRE  = SERVO_FIRE_CH;
 
-// =====================
-// SERVO rules (from Config.h)
-// =====================
-// Yaw
-static const int YAW_CENTER  = SERVO_YAW_CENTER;
-static const int YAW_MIN_DEG = SERVO_YAW_MIN;
-static const int YAW_MAX_DEG = SERVO_YAW_MAX;
+// ==================================================
+// YAW/PITCH HOLD MODE
+// ==================================================
+static int yawDeg   = SERVO_YAW_CENTER;
+static int pitchDeg = SERVO_PITCH_CENTER;
 
-// Pitch
-static const int PITCH_CENTER  = SERVO_PITCH_CENTER;
-static const int PITCH_MIN_DEG = SERVO_PITCH_MIN;
-static const int PITCH_MAX_DEG = SERVO_PITCH_MAX;
-
-// Fire
-static const int FIRE_IDLE   = SERVO_FIRE_IDLE;
-static const int FIRE_ACTIVE = SERVO_FIRE_ACTIVE;
-
-// Pulse range (from Config.h)
-static const uint16_t US_MIN = SERVO_US_MIN;
-static const uint16_t US_MAX = SERVO_US_MAX;
-
-// =====================
-// HOLD MODE (rate-based)
-// =====================
-static int yawDeg   = YAW_CENTER;
-static int pitchDeg = PITCH_CENTER;
-
-// deadzone stick
 static const float STICK_DZ = 0.08f;
-
-// (3) yaw speed diturunkan
-static const float YAW_RATE_DPS   = 350.0f; // deg/s saat stick full
+static const float YAW_RATE_DPS   = 350.0f;
 static const float PITCH_RATE_DPS = 120.0f;
 
-// =====================
-// FIRE ramp (pelan maju & pelan balik)
-// =====================
-static int firePosDeg    = FIRE_IDLE; // posisi aktual
-static int fireTargetDeg = FIRE_IDLE; // target
+// ==================================================
+// FIRE SERVO (PCA) RAMP
+// ==================================================
+static int firePosDeg    = SERVO_FIRE_IDLE;
+static int fireTargetDeg = SERVO_FIRE_IDLE;
 
-// tahan di ACTIVE (pakai Config FIRE_PULSE_MS)
-static const unsigned long FIRE_HOLD_MS = FIRE_PULSE_MS;
-
-// ramp step config (ubah ini kalau mau lebih pelan/cepat)
-static const unsigned long FIRE_STEP_MS = 10; // semakin besar -> makin pelan
-static const int FIRE_STEP_DEG = 2;           // semakin kecil -> makin halus/pelan
-
-static bool fireHoldingActive = false;
-static unsigned long fireHoldStartMs = 0;
 static unsigned long lastFireStepMs = 0;
+static const unsigned long FIRE_STEP_MS = 10;
+static const int FIRE_STEP_DEG = 2;
 
+// ==================================================
+// FIRE STATE MACHINE
+// ==================================================
+enum FireState {
+  FIRE_IDLE,
+  FIRE_SPINUP,
+  FIRE_SERVO,
+  FIRE_STOP
+};
+
+static FireState fireState = FIRE_IDLE;
+static unsigned long fireStartMs = 0;
 static unsigned long lastMs = 0;
 
-static void writeServoDeg(uint8_t ch, int deg, int degMin, int degMax) {
-  deg = clampi(deg, degMin, degMax);
-  uint16_t pulseUs = mapDegToUs(deg, degMin, degMax, US_MIN, US_MAX);
-  uint16_t ticks   = usToTicks(pulseUs);
-  pca.setPWM(ch, 0, ticks);
+// ==================================================
+// LOW-LEVEL SERVO WRITE
+// ==================================================
+static void writeServoDeg(uint8_t ch, int deg, int dMin, int dMax) {
+  uint16_t us = mapDegToUs(deg, dMin, dMax, SERVO_US_MIN, SERVO_US_MAX);
+  pca.setPWM(ch, 0, usToTicks(us));
 }
 
-static void applyOutputs() {
-  // (4) clamp lagi di writeServoDeg, jadi double-safety
-  writeServoDeg(CH_YAW,   yawDeg,   YAW_MIN_DEG,   YAW_MAX_DEG);
-  writeServoDeg(CH_PITCH, pitchDeg, PITCH_MIN_DEG, PITCH_MAX_DEG);
+static void applyYawPitch() {
+  writeServoDeg(CH_YAW, yawDeg, SERVO_YAW_MIN, SERVO_YAW_MAX);
+  writeServoDeg(CH_PITCH, pitchDeg, SERVO_PITCH_MIN, SERVO_PITCH_MAX);
 }
 
+// ==================================================
+// FIRE UPDATE (ESC + SERVO)
+// ==================================================
 static void updateFire(unsigned long nowMs, bool fireEvent, bool safe) {
+
   if (safe) {
-    fireHoldingActive = false;
-    fireTargetDeg = FIRE_IDLE;
-    firePosDeg = FIRE_IDLE;
-    writeServoDeg(CH_FIRE, firePosDeg, 0, 180);
+    esc1.writeMicroseconds(ESC_IDLE_US);
+    esc2.writeMicroseconds(ESC_IDLE_US);
+    fireTargetDeg = SERVO_FIRE_IDLE;
+    fireState = FIRE_IDLE;
     return;
   }
 
-  // trigger -> set target ACTIVE dan mulai hold timer
-  if (fireEvent) {
-    fireHoldingActive = true;
-    fireHoldStartMs = nowMs;
-    fireTargetDeg = FIRE_ACTIVE;
+  // Trigger (Square)
+  if (fireEvent && fireState == FIRE_IDLE) {
+    fireState = FIRE_SPINUP;
+    fireStartMs = nowMs;
+
+    // (1) BLDC full speed
+    esc1.writeMicroseconds(ESC_FULL_US);
+    esc2.writeMicroseconds(ESC_FULL_US);
   }
 
-  // jika sedang hold ACTIVE dan durasi habis -> target balik ke IDLE
-  if (fireHoldingActive && (nowMs - fireHoldStartMs >= FIRE_HOLD_MS)) {
-    fireHoldingActive = false;
-    fireTargetDeg = FIRE_IDLE;
+  switch (fireState) {
+
+    case FIRE_SPINUP:
+      // (2) after 1 sec -> start servo firing
+      if (nowMs - fireStartMs >= FIRE_MOTOR_SPINUP_MS) {
+        fireState = FIRE_SERVO;
+        fireTargetDeg = SERVO_FIRE_ACTIVE;
+      }
+      break;
+
+    case FIRE_SERVO:
+      // hold until total 3 sec since start
+      if (nowMs - fireStartMs >= FIRE_TOTAL_MS) {
+        fireState = FIRE_STOP;
+      }
+      break;
+
+    case FIRE_STOP:
+      // stop BLDC + return servo
+      esc1.writeMicroseconds(ESC_IDLE_US);
+      esc2.writeMicroseconds(ESC_IDLE_US);
+      fireTargetDeg = SERVO_FIRE_IDLE;
+      fireState = FIRE_IDLE;
+      fireStartMs = 0;
+      break;
+
+    default:
+      break;
   }
 
-  // ramp step setiap FIRE_STEP_MS
+  // Servo fire ramp (maju/mundur halus)
   if (nowMs - lastFireStepMs >= FIRE_STEP_MS) {
     lastFireStepMs = nowMs;
 
@@ -163,26 +163,31 @@ static void updateFire(unsigned long nowMs, bool fireEvent, bool safe) {
   }
 }
 
+// ==================================================
+// PUBLIC API
+// ==================================================
 void setup() {
   Wire.begin();
   pca.begin();
   pca.setPWMFreq((int)PCA_SERVO_HZ);
   delay(10);
 
-  yawDeg   = clampi(YAW_CENTER,   YAW_MIN_DEG,   YAW_MAX_DEG);
-  pitchDeg = clampi(PITCH_CENTER, PITCH_MIN_DEG, PITCH_MAX_DEG);
+  // ESC attach + arm idle
+  esc1.attach(ESC1_PIN);
+  esc2.attach(ESC2_PIN);
+  esc1.writeMicroseconds(ESC_IDLE_US);
+  esc2.writeMicroseconds(ESC_IDLE_US);
+
+  yawDeg   = constrain(SERVO_YAW_CENTER, SERVO_YAW_MIN, SERVO_YAW_MAX);
+  pitchDeg = constrain(SERVO_PITCH_CENTER, SERVO_PITCH_MIN, SERVO_PITCH_MAX);
+
+  firePosDeg = SERVO_FIRE_IDLE;
+  fireTargetDeg = SERVO_FIRE_IDLE;
 
   lastMs = millis();
-
-  // init fire ramp
-  firePosDeg = FIRE_IDLE;
-  fireTargetDeg = FIRE_IDLE;
-  fireHoldingActive = false;
-  fireHoldStartMs = 0;
   lastFireStepMs = millis();
 
-  // Set initial outputs
-  applyOutputs();
+  applyYawPitch();
   writeServoDeg(CH_FIRE, firePosDeg, 0, 180);
 }
 
@@ -190,39 +195,29 @@ void update(float rx, float ry, bool fireEvent, bool safe) {
   const unsigned long nowMs = millis();
 
   if (safe) {
-    yawDeg   = clampi(YAW_CENTER,   YAW_MIN_DEG,   YAW_MAX_DEG);
-    pitchDeg = clampi(PITCH_CENTER, PITCH_MIN_DEG, PITCH_MAX_DEG);
-    applyOutputs();
+    yawDeg   = SERVO_YAW_CENTER;
+    pitchDeg = SERVO_PITCH_CENTER;
+    applyYawPitch();
     updateFire(nowMs, false, true);
     lastMs = nowMs;
     return;
   }
 
-  // =====================
-  // HOLD MODE: stick = rate (tidak auto balik tengah)
-  // =====================
-  rx = deadz(clampf(rx, -1.0f, 1.0f), STICK_DZ);
-  ry = deadz(clampf(ry, -1.0f, 1.0f), STICK_DZ);
-
-  // (2) invert yaw & pitch (hapus salah satu jika ternyata hanya 1 yang kebalik)
-  rx = -rx;
-  ry = -ry;
+  // deadzone + invert (kalau kebalik, hapus salah satunya)
+  rx = (fabs(rx) < STICK_DZ) ? 0.0f : -rx;
+  ry = (fabs(ry) < STICK_DZ) ? 0.0f : -ry;
 
   float dt = (nowMs - lastMs) / 1000.0f;
   lastMs = nowMs;
   if (dt < 0) dt = 0;
 
-  // rx -> yaw, ry -> pitch
-  yawDeg   += (int)lround(rx * YAW_RATE_DPS   * dt);
+  yawDeg   += (int)lround(rx * YAW_RATE_DPS * dt);
   pitchDeg += (int)lround(ry * PITCH_RATE_DPS * dt);
 
-  // (4) enforce limits
-  yawDeg   = clampi(yawDeg,   YAW_MIN_DEG,   YAW_MAX_DEG);
-  pitchDeg = clampi(pitchDeg, PITCH_MIN_DEG, PITCH_MAX_DEG);
+  yawDeg   = constrain(yawDeg, SERVO_YAW_MIN, SERVO_YAW_MAX);
+  pitchDeg = constrain(pitchDeg, SERVO_PITCH_MIN, SERVO_PITCH_MAX);
 
-  applyOutputs();
-
-  // fire ramp update (1)
+  applyYawPitch();
   updateFire(nowMs, fireEvent, false);
 }
 

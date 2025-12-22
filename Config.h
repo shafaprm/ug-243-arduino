@@ -58,8 +58,7 @@ static const uint8_t SERVO_YAW_CH   = 0;  // Servo 1 (Yaw)
 static const uint8_t SERVO_PITCH_CH = 1;  // Servo 2 (Pitch)
 static const uint8_t SERVO_FIRE_CH  = 2;  // Servo 3 (Fire)
 
-// Common pulse range (lebih konservatif supaya servo patuh limit & tidak dorong mentok)
-// Kalau mau lebih luas, bisa balik ke 600..2400.
+// Common pulse range
 static const uint16_t SERVO_US_MIN = 900;
 static const uint16_t SERVO_US_MAX = 2100;
 
@@ -67,9 +66,6 @@ static const uint16_t SERVO_US_MAX = 2100;
 // SERVO 1 (YAW) rules
 // =====================
 static const int SERVO_YAW_CENTER = 85;
-
-// (5) Kurangi limit yaw biar tidak terlalu mentok beloknya
-// Silakan adjust: makin kecil range -> makin aman
 static const int SERVO_YAW_MIN    = 35;
 static const int SERVO_YAW_MAX    = 135;
 
@@ -84,7 +80,21 @@ static const int SERVO_PITCH_MAX    = 105;
 // SERVO 3 (FIRE) rules
 // =====================
 static const int SERVO_FIRE_IDLE   = 90;
-static const int SERVO_FIRE_ACTIVE = 0;      // posisi "tembak"
+static const int SERVO_FIRE_ACTIVE = 0;
 
-// Durasi tahan di posisi ACTIVE (bukan durasi total gerak; gerak dibuat ramp di Turret.cpp)
+// Durasi tahan di posisi ACTIVE (dipakai oleh mekanisme fire servo)
 static const unsigned long FIRE_PULSE_MS = 140;
+
+// =====================
+// BLDC / ESC (Shooter)
+// =====================
+static const int ESC1_PIN = 2;
+static const int ESC2_PIN = 4;
+
+// ESC control (servo-style pulse)
+static const int ESC_IDLE_US = 1000;
+static const int ESC_FULL_US = 2000;
+
+// Timing sequence (ms)
+static const unsigned long FIRE_MOTOR_SPINUP_MS = 1000; // 1 detik
+static const unsigned long FIRE_TOTAL_MS        = 3000; // total 3 detik

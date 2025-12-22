@@ -16,14 +16,12 @@ static const char* dirName(int pwmSigned) {
 
 void sendBoot() {
   if (!TELEMETRY_ON) return;
+
   StaticJsonDocument<128> out;
   out["stat"] = "boot";
-  // serializeJson(out, Serial);
-  // Serial.println();
-  if (!out.isNull() && out.size() > 0) {
-    serializeJson(out, Serial);
-    Serial.println();
-  }
+
+  serializeJson(out, Serial);
+  Serial.println();
 }
 
 void tick(bool timeout, bool safe) {
@@ -34,7 +32,6 @@ void tick(bool timeout, bool safe) {
   lastTelemMs = now;
 
   const bool parseErr = Comm::consumeParseErrorFlag();
-  // const bool parseErr = false;
 
   const char* stat;
   if (parseErr) stat = "parse_err";
@@ -60,12 +57,10 @@ void tick(bool timeout, bool safe) {
 
   out["dirL"] = dirName(Drive::getOutL());
   out["dirR"] = dirName(Drive::getOutR());
-  out["age"] = (unsigned long)Comm::ageMs();
+  out["age"]  = (unsigned long)Comm::ageMs();
 
-  if (!out.isNull() && out.size() > 0) {
-    serializeJson(out, Serial);
-    Serial.println();
-  }
+  serializeJson(out, Serial);
+  Serial.println();
 }
 
 } // namespace Telemetry
