@@ -2,6 +2,7 @@
 #include "Config.h"
 #include "Comm.h"
 #include "Drive.h"
+#include "Turret.h"
 #include <ArduinoJson.h>
 #include <Arduino.h>
 
@@ -47,8 +48,23 @@ void tick(bool timeout, bool safe) {
 
   out["th"] = Comm::getTh();
   out["st"] = Comm::getSt();
-  out["rx"] = Comm::getRx();
-  out["ry"] = Comm::getRy();
+  // out["rx"] = Comm::getRx();
+  // out["ry"] = Comm::getRy();
+  // =================================================
+  // START TAMBAHAN SALAFI
+  // =================================================
+  out["rx_cmd"] = Comm::getRx();
+  out["ry_cmd"] = Comm::getRy();
+  out["turret_mode"] = (int)Comm::getTurretMode();
+
+  out["yaw_deg"]   = Turret::getYawDeg();
+  out["pitch_deg"] = Turret::getPitchDeg();
+
+  out["rx_act"] = Turret::getRxAct();
+  out["ry_act"] = Turret::getRyAct();
+  // =================================================
+  // END TAMBAHAN SALAFI
+  // =================================================
 
   out["tL"] = Drive::getTargetL();
   out["tR"] = Drive::getTargetR();

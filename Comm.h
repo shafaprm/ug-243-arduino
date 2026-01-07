@@ -2,6 +2,18 @@
 #include <Arduino.h>
 
 namespace Comm {
+
+  // ==================================================
+  // Start TAMBAHAN SALAFI
+  // ==================================================
+  enum TurretMode : uint8_t{
+    TURRET_RATE = 0,
+    TURRET_POS = 1
+  };
+  // ==================================================
+  // END TAMBAHAN SALAFI
+  // ==================================================
+
   void setup();
   void poll();
 
@@ -9,7 +21,13 @@ namespace Comm {
   float getSt();
   float getRx();
   float getRy();
-
+  // ==================================================
+  // Start TAMBAHAN SALAFI
+  // ==================================================
+  TurretMode getTurretMode();
+  // ==================================================
+  // END TAMBAHAN SALAFI
+  // ==================================================
   bool consumeFire();
 
   bool getEstop();

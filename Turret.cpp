@@ -276,9 +276,47 @@ static const uint8_t CH_ESC2  = ESC2_CH;
 static int yawDeg   = SERVO_YAW_CENTER;
 static int pitchDeg = SERVO_PITCH_CENTER;
 
+
+// ==================================================
+// START TAMBAHAN SALAFI
+// ==================================================
+static int yawTargetDeg   = SERVO_YAW_CENTER;
+static int pitchTargetDeg = SERVO_PITCH_CENTER;
+
+static inline float normAct(int deg, int center, int dMin, int dMax) {
+  // gunakan span asimetris yg aman
+  const int spanNeg = center - dMin;
+  const int spanPos = dMax - center;
+  const float span = (deg >= center) ? (float)max(1, spanPos) : (float)max(1, spanNeg);
+  return (float)(deg - center) / span; // hasil -1..1 kira-kira
+}
+// ==================================================
+// END TAMBAHAN SALAFI
+// ==================================================
+
+
 static const float STICK_DZ = 0.08f;
 static const float YAW_RATE_DPS   = 350.0f;
 static const float PITCH_RATE_DPS = 120.0f;
+
+// ==================================================
+// START TAMBAHAN SALAFI
+// ==================================================
+static inline int stepToward(int cur, int target, int step) {
+  if (cur < target) return min(cur + step, target);
+  if (cur > target) return max(cur - step, target);
+  return cur;
+}
+
+// Map act (-1..1) -> degree with asymmetric span
+static inline int posToDeg(float v, int center, int dMin, int dMax) {
+  v = constrain(v, -1.0f, 1.0f);
+  if (v >= 0.0f) return (int)lround(center + v * (dMax - center));
+  else           return (int)lround(center + v * (center - dMin));
+}
+// ==================================================
+// END TAMBAHAN SALAFI
+// ==================================================
 
 // ==================================================
 // FIRE SERVO (PCA) RAMP
@@ -407,6 +445,15 @@ void setup() {
   yawDeg   = constrain(SERVO_YAW_CENTER, SERVO_YAW_MIN, SERVO_YAW_MAX);
   pitchDeg = constrain(SERVO_PITCH_CENTER, SERVO_PITCH_MIN, SERVO_PITCH_MAX);
 
+  // ==================================================
+  // START TAMBAHAN SALAFI
+  // ==================================================
+  yawTargetDeg   = yawDeg;
+  pitchTargetDeg = pitchDeg;
+  // ==================================================
+  // END TAMBAHAN SALAFI
+  // ==================================================  
+
   firePosDeg = SERVO_FIRE_IDLE;
   fireTargetDeg = SERVO_FIRE_IDLE;
 
@@ -417,25 +464,79 @@ void setup() {
   writeServoDeg(CH_FIRE, firePosDeg, 0, 180);
 }
 
-void update(float rx, float ry, bool fireEvent, bool safe) {
+// void update(float rx, float ry, bool fireEvent, bool safe) {
+//   const unsigned long nowMs = millis();
+
+//   if (safe) {
+//     yawDeg   = SERVO_YAW_CENTER;
+//     pitchDeg = SERVO_PITCH_CENTER;
+//     applyYawPitch();
+//     updateFire(nowMs, false, true);
+//     lastMs = nowMs;
+//     return;
+//   }
+
+//   // deadzone + invert (kalau kebalik, hapus salah satunya)
+//   rx = (fabs(rx) < STICK_DZ) ? 0.0f : -rx;
+//   ry = (fabs(ry) < STICK_DZ) ? 0.0f : -ry;
+
+//   float dt = (nowMs - lastMs) / 1000.0f;
+//   lastMs = nowMs;
+//   if (dt < 0) dt = 0;
+
+//   yawDeg   += (int)lround(rx * YAW_RATE_DPS * dt);
+//   pitchDeg += (int)lround(ry * PITCH_RATE_DPS * dt);
+
+//   yawDeg   = constrain(yawDeg, SERVO_YAW_MIN, SERVO_YAW_MAX);
+//   pitchDeg = constrain(pitchDeg, SERVO_PITCH_MIN, SERVO_PITCH_MAX);
+
+//   applyYawPitch();
+//   updateFire(nowMs, fireEvent, false);
+// }
+// NEW SIGNATURE: mode (0=rate, 1=pos)
+void update(float rx, float ry, uint8_t mode, bool fireEvent, bool safe) {
   const unsigned long nowMs = millis();
 
   if (safe) {
     yawDeg   = SERVO_YAW_CENTER;
     pitchDeg = SERVO_PITCH_CENTER;
+
+    yawTargetDeg   = yawDeg;
+    pitchTargetDeg = pitchDeg;
+
     applyYawPitch();
     updateFire(nowMs, false, true);
     lastMs = nowMs;
     return;
   }
 
-  // deadzone + invert (kalau kebalik, hapus salah satunya)
-  rx = (fabs(rx) < STICK_DZ) ? 0.0f : -rx;
-  ry = (fabs(ry) < STICK_DZ) ? 0.0f : -ry;
-
   float dt = (nowMs - lastMs) / 1000.0f;
   lastMs = nowMs;
   if (dt < 0) dt = 0;
+
+  if (mode == 1) {
+    // POS mode: rx/ry adalah target act (-1..1)
+    yawTargetDeg   = posToDeg(rx, SERVO_YAW_CENTER, SERVO_YAW_MIN, SERVO_YAW_MAX);
+    pitchTargetDeg = posToDeg(ry, SERVO_PITCH_CENTER, SERVO_PITCH_MIN, SERVO_PITCH_MAX);
+
+    // step per loop based on configured dps
+    const int yawStep   = max(1, (int)lround(YAW_RATE_DPS * dt));
+    const int pitchStep = max(1, (int)lround(PITCH_RATE_DPS * dt));
+
+    yawDeg   = stepToward(yawDeg, yawTargetDeg, yawStep);
+    pitchDeg = stepToward(pitchDeg, pitchTargetDeg, pitchStep);
+
+    yawDeg   = constrain(yawDeg, SERVO_YAW_MIN, SERVO_YAW_MAX);
+    pitchDeg = constrain(pitchDeg, SERVO_PITCH_MIN, SERVO_PITCH_MAX);
+
+    applyYawPitch();
+    updateFire(nowMs, fireEvent, false);
+    return;
+  }
+
+  // RATE mode: deadzone + invert (sesuai behavior kamu sebelumnya)
+  rx = (fabs(rx) < STICK_DZ) ? 0.0f : -rx;
+  ry = (fabs(ry) < STICK_DZ) ? 0.0f : -ry;
 
   yawDeg   += (int)lround(rx * YAW_RATE_DPS * dt);
   pitchDeg += (int)lround(ry * PITCH_RATE_DPS * dt);
@@ -443,9 +544,29 @@ void update(float rx, float ry, bool fireEvent, bool safe) {
   yawDeg   = constrain(yawDeg, SERVO_YAW_MIN, SERVO_YAW_MAX);
   pitchDeg = constrain(pitchDeg, SERVO_PITCH_MIN, SERVO_PITCH_MAX);
 
+  yawTargetDeg   = yawDeg;
+  pitchTargetDeg = pitchDeg;
+
   applyYawPitch();
   updateFire(nowMs, fireEvent, false);
 }
+  // ==================================================
+  // START TAMBAHAN SALAFI
+  // ==================================================
+  int getYawDeg() { return yawDeg; }
+  int getPitchDeg() { return pitchDeg; }
+
+  float getRxAct() {
+    return normAct(yawDeg, SERVO_YAW_CENTER, SERVO_YAW_MIN, SERVO_YAW_MAX);
+  }
+
+  float getRyAct() {
+    return normAct(pitchDeg, SERVO_PITCH_CENTER, SERVO_PITCH_MIN, SERVO_PITCH_MAX);
+  }
+
+  // ==================================================
+  // END TAMBAHAN SALAFI
+  // ==================================================
 
 } // namespace Turret
 

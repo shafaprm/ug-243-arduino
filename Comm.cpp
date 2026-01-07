@@ -22,6 +22,14 @@ static float ry = 0.0f;
 static bool firePending = false;
 static bool parseErrFlag = false;
 
+// ==================================================
+// Start TAMBAHAN SALAFI
+// ==================================================
+static Comm::TurretMode turretMode = Comm::TURRET_RATE;
+// ==================================================
+// END TAMBAHAN SALAFI
+// ==================================================
+
 static inline float clampf(float x, float lo, float hi) {
   if (x < lo) return lo;
   if (x > hi) return hi;
@@ -48,6 +56,16 @@ static bool parseSetCommand(const char* jsonLine) {
   st = drive["st"] | 0.0f;
 
   JsonVariant turret = doc["turret"];
+  // ==================================================
+  // Start TAMBAHAN SALAFI
+  // ==================================================  
+  // NEW: turret.mode (0=rate default, 1=pos)
+  int tmode = turret["mode"] | 0;
+  if (tmode == 1) turretMode = Comm::TURRET_POS;
+  else turretMode = Comm::TURRET_RATE;
+  // ==================================================
+  // END TAMBAHAN SALAFI
+  // ==================================================
   rx = turret["rx"] | 0.0f;
   ry = turret["ry"] | 0.0f;
 
@@ -105,6 +123,13 @@ float getTh() { return th; }
 float getSt() { return st; }
 float getRx() { return rx; }
 float getRy() { return ry; }
+// ==================================================
+// Start TAMBAHAN SALAFI
+// ==================================================
+Comm::TurretMode getTurretMode() { return turretMode; }
+// ==================================================
+// End TAMBAHAN SALAFI
+// ==================================================
 
 bool consumeFire() {
   if (firePending) { firePending = false; return true; }

@@ -23,6 +23,7 @@ void loop() {
   Turret::update(
     Comm::getRx(),
     Comm::getRy(),
+    (uint8_t)Comm::getTurretMode(),
     Comm::consumeFire(),
     safe
   );

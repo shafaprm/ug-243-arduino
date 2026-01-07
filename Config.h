@@ -170,14 +170,14 @@ static const uint16_t SERVO_US_MAX = 2100;
 // =====================
 // SERVO 1 (YAW) rules
 // =====================
-static const int SERVO_YAW_CENTER = 85;
+static const int SERVO_YAW_CENTER = 106;
 static const int SERVO_YAW_MIN    = 35;
 static const int SERVO_YAW_MAX    = 135;
 
 // =====================
 // SERVO 2 (PITCH) rules
 // =====================
-static const int SERVO_PITCH_CENTER = 90;
+static const int SERVO_PITCH_CENTER = 98;
 static const int SERVO_PITCH_MIN    = 75;
 static const int SERVO_PITCH_MAX    = 105;
 
